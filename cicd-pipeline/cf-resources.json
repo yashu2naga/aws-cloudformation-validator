@@ -1,11 +1,5 @@
 [
-    { "Type" : "SG",
-      "ID" : "sg-37c9b499"
-    },
-    { "Type" : "AMI",
-      "ID" : "ami-e7e52999"
-    },
-    { "Type" : "Subnet",
-      "ID" : "subnet-034e2999"
+    { "Type" : "VPC",
+      "ID" : "12345678"
     }
   ]
