@@ -1,6 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Create vpc stack
-Resources:
   myVPC:
     Type: AWS::EC2::VPC
     Properties:
