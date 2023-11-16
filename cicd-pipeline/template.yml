@@ -1,260 +1,921 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-              Creates CICD services (CodePipeline, CodeBuild, etc.) for CSA CMR resources deployment.
+              Create required secrets in Secrets Manager for cms simplification project.
 Parameters:
-  Env:
+  ApplicationName:
+    Description: Application Name
     Type: String
-    Default: np
-    Description:
-      Enter Environment Name.
+    Default: spares
+  BoxRawGlueJobName:
+    Type: String
+    Description: Name of the Box raw layer ingestion job.
+  DOSRawJobName:
+    Description: Name of the DOS(redshift) raw ingestion job.
+    Type: String
+  DQMirrorJobName:
+    Description: Name of the Data quality mirror testing job.
+    Type: String
+  DimensionLoadJobName:
+    Description: Name of the Dimension Load.
+    Type: String
+  Env:
+    Description: Environment of deployment
+    Type: String
+  ExecuteRedshiftLambda:
+    Description: Name of the Lambda Function which copies data to Redshift and calls store procedures
+    Type: String
+  FlatfileStateMachineName:
+    Description: Name of the Flatfiles step function
+    Type: String
+  FoundationReportTableName:
+    Description: Name of the foundation report glue job
+    Type: String
+  GlueLogs:
+    Description: Log location for all Glue jobs
+    Type: String
+  LambdaLayerName:
+    Description: Name of the LambdaLayer for Lambda
+    Type: String
+  LoadSummaryEmailLambda:
+    Description: Name of the Lambda Function
+    Type: String
+  MirrorJobName:
+    Description: Name of the mirror layer ingestion job.
+    Type: String
+  MirrorStateMachineName:
+    Description: Name of the mirror layer step function
+    Type: String
+  OracleRawConditionalGlueJobName:
+    Description: Name of the Oracle(CP) raw layer ingestion job(conditional load).
+    Type: String
+  OracleRawGlueJobName:
+    Description: Name of the Oracle(CP) raw layer ingestion job.
+    Type: String
+  OrganizationName:
+    Description: Organization Name
+    Type: String
+    Default: cms
+  OMGitRepo:
+    Description: Repository of order management
+    Default: order-management
+    Type: String
+  orchestrationStateMachineName:
+    Description: Name of the orchestration step function
+    Type: String
+  RawLoadStateMachineName:
+    Description: Name of the raw layer step function
+    Type: String
+  SalesEmail:
+    Description: Name of the Sales Lambda Function
+    Type: String
+  SecurityGroupGeneral:
+    Description: Id of the main security group
+    Type: String
+  SecurityGroupRDS:
+    Description: Id of the RDS Security group
+    Type: String
+  SmartsheetRawJobName:
+    Description: Name of the smartsheet raw layer ingestion job.
+    Type: String
   UAI:
     Description: UAI of the application
     Type: String
-  AppKms:
-    Description: Application Team's KMS Key ARN used to encrypt and decrypt data
-    Type: String
-    Default: arn:aws-us-gov:kms:us-gov-east-1:231648331929:key/44b6fecf-3f55-4225-b64b-7f2f90b46c75
-  BuildComputeSize:
-    Type: String
-    AllowedValues: [Small, Medium, Large]
-    Default: Small
-    Description: CodeBuild Compute Instance Size (Small, Medium, Large) - Small is default.
-    ConstraintDescription: Parameter 'BuildComputeSize' must be one of the following values - [Small, Medium, Large]
-  BuildImage:
-    Type: String
-    AllowedValues: [ubuntu5.0, ubuntu4.0, ubuntu3.0, al2-x86-3.0, al2-aarch64-2.0]
-    Default: ubuntu5.0
-    Description: CodeBuild Docker Image (ubuntu5.0, ubuntu4.0, ubuntu3.0, al2-x86-3.0, al2-aarch64-2.0) - ubuntu5.0 is default.
-    ConstraintDescription: Parameter 'BuildImage' must be one of the following values - [ubuntu5.0, ubuntu4.0, ubuntu3.0, al2-x86-3.0, al2-aarch64-2.0]
-  BuildTimeoutInMinutes:
-    Type: Number
-    Default: 15
-    Description: Timeout in minutes for the CodeBuild project.
-  BuildVPC:
-    Type: AWS::EC2::VPC::Id
-    Default: vpc-07fe810867f40e8b8
-    Description: VPC where CodeBuild jobs run.
-  CodeBuildServiceRoleName:
-    Type: String
-    Default: cms-spares-codebuild
-    Description: IAM Role Name used by the CodeBuild Service.
-  BranchName:
-    Type: String
-    Default: "dev"
-    Description: Name of the branch in your Order management Github Repository to trigger deployments on a pr/merge into this branch.
-  GithubURL:
-    Type: String
-    Default: https://github.build.ge.com/CMS-Spares/cms-spares-order-management
-    AllowedPattern: https:\/\/github.build.ge.com\/[a-zA-Z0-9-]*\/[a-zA-Z0-9-]*(?<!.git)
-    Description: Https URL of the Order management GitHub Enterprise repository
-    ConstraintDescription: Malformed input-parameter GitHub URL. Must be a valid URL (eg. https://github.build.ge.com/sample-organization/sample-repository). Remember to omit '.git' from the end of your repository name.
-  Subnets:
-    Type: CommaDelimitedList
-    Description: List of Subnets.
-  SecurityGroupId:
-    Type: String
-    Description: The id of the security group
-  Template:
-    Description: CFT file name
-    Type: String
-    Default: template.yaml
-  OMGitRepo:
-    Description: Name of git repository
-    Type: String
-    Default: order-management
-  CodePipelineServiceRoleName:
-    Description: Name of code pipeline service role
-    Type: String
-  CloudFormationServiceRoleName:
-    Description: Name of cloudformation service role
-    Type: String
-  CICDBucketName:
-    Description: Name of CICD bucket
+  VPCSubnet:
+    Description: Id of the subnet
     Type: String
 
-Conditions:
-  IsCICDSourceBranch: !Not [ !Equals [!Ref 'OMGithubBranchName', '' ] ]
-  ShouldEnableProdApproval: !Equals [ !Ref 'Env', 'p' ]
 Mappings:
-  ComputeMap:
-    Small:
-      ComputeType: BUILD_GENERAL1_SMALL
-    Medium:
-      ComputeType: BUILD_GENERAL1_MEDIUM
-    Large:
-      ComputeType: BUILD_GENERAL1_LARGE
-  ImageMap:
-    al2-x86-3.0:
-      Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
-    al2-aarch64-2.0:
-      Image: aws/codebuild/amazonlinux2-aarch64-standard:2.0
-    ubuntu3.0:
-      Image: aws/codebuild/standard:3.0
-    ubuntu4.0:
-      Image: aws/codebuild/standard:4.0
-    ubuntu5.0:
-      Image: aws/codebuild/standard:5.0
+  EnvironmentMap:
+    np:
+      emailFrom: "Spares.Digitization@ae.ge.com"
+      emailTo: "cms.spares.simplification@ge.com"
+      extraPythonFiles: "s3://cms-spares-cicd-np/cms-spares-order-management/np/shared_utils.zip"
+      dynamoTable: "cms-spares-ingestion-metadata-np"
+      s3Bucket: "s3://cms-spares-lz-np"
+      rdsUserSecret: "/cms-spares/np/rdsuser"
+      tempDirectory: "s3://cms-spares-lz-np/temp/cp/om/"
+      smtpServerIp: "10.38.9.235"
+      glueIAM: "arn:aws-us-gov:iam::231648331929:role/cms-spares-glue"
+      conf: "spark.sql.legacy.parquet.int96RebaseModeInWrite=CORRECTED --conf spark.sql.legacy.parquet.int96RebaseModeInRead=CORRECTED --conf spark.sql.legacy.parquet.datetimeRebaseModeInRead=CORRECTED --conf spark.sql.legacy.parquet.datetimeRebaseModeInWrite=CORRECTED"
+    p:
+      emailFrom: "Spares.Digitization@ae.ge.com"
+      emailTo: "cms.spares.simplification@ge.com"
+      extraPythonFiles: "s3://cms-spares-cicd-p/cms-spares-order-management/p/shared_utils.zip"
+      dynamoTable: "cms-spares-ingestion-metadata-p"
+      s3Bucket: "s3://cms-spares-lz-p"
+      rdsUserSecret: "/cms-spares/p/rdsuser"
+      tempDirectory: "s3://cms-spares-lz-p/temp/cp/om/"
+      smtpServerIp: "10.38.9.235"
+      glueIAM: "arn:aws-us-gov:iam::254227609986:role/cms-spares-glue"
+      conf: "spark.sql.legacy.parquet.int96RebaseModeInWrite=CORRECTED --conf spark.sql.legacy.parquet.int96RebaseModeInRead=CORRECTED --conf spark.sql.legacy.parquet.datetimeRebaseModeInRead=CORRECTED --conf spark.sql.legacy.parquet.datetimeRebaseModeInWrite=CORRECTED"
+
 
 Resources:
-  CodeBuildProject:
-    Type: AWS::CodeBuild::Project
+  OracleRawJob:
+    Type: AWS::Glue::Job
     Properties:
-      Name: 
-      ServiceRole: 
-      EncryptionKey: !Ref AppKms
-      SourceVersion:
-        !If
-              - IsCICDSourceBranch
-              - !Ref OMGithubBranchName
-              - !Ref "AWS::NoValue"
-      Source:
-        Type: GITHUB_ENTERPRISE
-        Location: !Ref OMGithubURL
-        GitCloneDepth: 1
-        ReportBuildStatus: true
-        BuildSpec: !Join ["/", [cicd-pipeline, !Sub 'buildspec.yaml']]
-      Artifacts:
-        Type: NO_ARTIFACTS
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${BoxRawJob}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-cp-source-${Env}"
+      Description: This job loads from Oracle(CP) to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${OracleRawGlueJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/cp_raw/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-jars': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/jars/ojdbc11.jar"
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_oracle': !Sub "/${OrganizationName}-${ApplicationName}/${Env}/source"
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${OracleRawGlueJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  OracleRawConditionalJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${OracleRawConditionalGlueJobName}-${Env}"
+      Role: !FindInMap [ EnvironmentMap, !Ref Env, glueIAM ]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-cp-source-${Env}"
+      Description: This job loads from Oracle(CP) to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${OracleRawConditionalGlueJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/cp_raw/"
+        '--TempDir': !FindInMap [ EnvironmentMap, !Ref Env, tempDirectory ]
+        '--enable-glue-datacatalog': true
+        '--extra-jars': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/jars/ojdbc11.jar"
+        '--extra-py-files': !FindInMap [ EnvironmentMap, !Ref Env, extraPythonFiles ]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [ EnvironmentMap, !Ref Env, dynamoTable ]
+        '--email_from': !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+        '--email_to': !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+        '--s3_bucket': !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+        '--secret_oracle': !Sub "/${OrganizationName}-${ApplicationName}/${Env}/source"
+        '--secret_rds': !FindInMap [ EnvironmentMap, !Ref Env, rdsUserSecret ]
+        '--smtp_server_ip': !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${OracleRawConditionalGlueJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  BoxRawJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${BoxRawGlueJobName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-network-${Env}"
+      Description: This job loads from Box to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${BoxRawGlueJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/box_raw/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary,pandas,awswrangler,boxsdk[jwt]
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_box': !Sub "/${OrganizationName}-${ApplicationName}/${Env}/box"
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${BoxRawGlueJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  SmartsheetRawJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${SmartsheetRawJobName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-network-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${SmartsheetRawJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/smartsheet_raw/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary,smartsheet-python-sdk,pandas,awswrangler,requests,urllib3
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--python-modules-installer-option': --upgrade
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${SmartsheetRawJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  DOSRawJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${DOSRawJobName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${DOSRawJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/redshift_raw/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--connection_name': !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${DOSRawJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  DimensionLoadJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${DimensionLoadJobName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${DimensionLoadJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/dimension/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--historical_load': Y
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--connection_name': !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+        '--dynamodb_table': !Sub "${OrganizationName}-${ApplicationName}-dimension-metadata-${Env}"
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket_output': !Sub "s3://${OrganizationName}-${ApplicationName}-processed-${Env}"
+        '--s3_bucket_input': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}"
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--source_table': !Sub "${ApplicationName}_d_engine_model"
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${DimensionLoadJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  DQMirrorJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${DQMirrorJobName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${DQMirrorJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${DQMirrorJobName}/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--connection_name': !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${DQMirrorJobName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  FoundationReportTableJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${FoundationReportTableName}-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads foundation report table.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${FoundationReportTableName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-disable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${FoundationReportTableName}/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--connection_name': !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--order_lines_json_path':  !Sub "s3://${OrganizationName}-${ApplicationName}-order-management/${Env}/artifacts/configurations/order_lines_logic.json"
+        '--s3_bucket_output': !Sub "s3://${OrganizationName}-${ApplicationName}-processed-${Env}"
+        '--s3_bucket_input': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}"
+        '--s3_bucket_config': !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--snecma_json_path': !Sub "s3://${OrganizationName}-${ApplicationName}-order-management/np/artifacts/configurations/snecma_logic.json"
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${FoundationReportTableName}-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  MirrorJobOne:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_1-${Env}"
+      Role: !FindInMap [EnvironmentMap, !Ref Env, glueIAM]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 10
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${MirrorJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${MirrorJobName}/"
+        '--TempDir': !FindInMap [EnvironmentMap, !Ref Env, tempDirectory]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [EnvironmentMap, !Ref Env, extraPythonFiles]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [EnvironmentMap, !Ref Env, dynamoTable]
+        '--email_from': !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        '--email_to': !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        '--s3_bucket': !FindInMap [EnvironmentMap, !Ref Env, s3Bucket]
+        '--secret_rds': !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        '--smtp_server_ip': !FindInMap [EnvironmentMap, !Ref Env, smtpServerIp]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_1-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  MirrorJobTwo:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_2-${Env}"
+      Role: !FindInMap [ EnvironmentMap, !Ref Env, glueIAM ]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${MirrorJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${MirrorJobName}/"
+        '--TempDir': !FindInMap [ EnvironmentMap, !Ref Env, tempDirectory ]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [ EnvironmentMap, !Ref Env, extraPythonFiles ]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [ EnvironmentMap, !Ref Env, dynamoTable ]
+        '--email_from': !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+        '--email_to': !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+        '--s3_bucket': !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+        '--secret_rds': !FindInMap [ EnvironmentMap, !Ref Env, rdsUserSecret ]
+        '--smtp_server_ip': !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_2-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  MirrorJobThree:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_3-${Env}"
+      Role: !FindInMap [ EnvironmentMap, !Ref Env, glueIAM ]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${MirrorJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${MirrorJobName}/"
+        '--TempDir': !FindInMap [ EnvironmentMap, !Ref Env, tempDirectory ]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [ EnvironmentMap, !Ref Env, extraPythonFiles ]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [ EnvironmentMap, !Ref Env, dynamoTable ]
+        '--email_from': !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+        '--email_to': !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+        '--s3_bucket': !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+        '--secret_rds': !FindInMap [ EnvironmentMap, !Ref Env, rdsUserSecret ]
+        '--smtp_server_ip': !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_3-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  MirrorJobFour:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_4-${Env}"
+      Role: !FindInMap [ EnvironmentMap, !Ref Env, glueIAM ]
+      GlueVersion: 3.0
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      MaxRetries: 0
+      Timeout: 150
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      Connections:
+        Connections:
+          - !Sub "${OrganizationName}-${ApplicationName}-dos-${Env}"
+      Description: This job loads from smartsheet to S3 raw layer.
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub "s3://${OrganizationName}-${ApplicationName}-cicd-${Env}/${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/${MirrorJobName}.py"
+      DefaultArguments:
+        '--enable-job-insights': true
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': true
+        '--enable-continuous-cloudwatch-log': true
+        '--enable-spark-ui': true
+        '--spark-event-logs-path': !Sub "s3://${OrganizationName}-${ApplicationName}-lz-${Env}/${GlueLogs}/${MirrorJobName}/"
+        '--TempDir': !FindInMap [ EnvironmentMap, !Ref Env, tempDirectory ]
+        '--enable-glue-datacatalog': true
+        '--extra-py-files': !FindInMap [ EnvironmentMap, !Ref Env, extraPythonFiles ]
+        '--additional-python-modules': psycopg2-binary
+        '--conf': !FindInMap [ EnvironmentMap, !Ref Env, conf ]
+        '--dynamodb_table': !FindInMap [ EnvironmentMap, !Ref Env, dynamoTable ]
+        '--email_from': !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+        '--email_to': !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+        '--s3_bucket': !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+        '--secret_rds': !FindInMap [ EnvironmentMap, !Ref Env, rdsUserSecret ]
+        '--smtp_server_ip': !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+        '--job-language': python
+      Tags:
+        "Name": !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_4-${Env}"
+        "uai": !Ref UAI
+        "owner": !Sub "${OrganizationName}-${ApplicationName}"
+        "Env": !Sub "${Env}"
+  LoadTriggerRule:
+    Type: AWS::Events::Rule
+    DependsOn: orchestrationStateMachineWorkflow
+    Properties:
+      Name: !Sub "${OrganizationName}-${ApplicationName}-load-trigger-${Env}"
+      Description: Schedules Raw Load
+      EventBusName: default
+      State: "DISABLED"
+      ScheduleExpression: "cron(0 4 * * ? *)"
+      Targets:
+        - Arn: !Sub "arn:${AWS::Partition}:states:us-gov-east-1:${AWS::AccountId}:stateMachine:${OrganizationName}-${ApplicationName}-${orchestrationStateMachineName}-${Env}"
+          Id: SparesLoadScheduler
+          RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-states"
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      Description: This creates a layer for Lambda
+      LayerName: !Sub "${OrganizationName}-${ApplicationName}-${LambdaLayerName}-${Env}"
+      CompatibleRuntimes:
+         - python3.7
+         - python3.8
+         - python3.9
+      Content: 
+        S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        S3Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/lambda_layer.zip"
+  LoadSummaryEmailLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLayer
+    Properties:
+      FunctionName: !Sub "${OrganizationName}-${ApplicationName}-${LoadSummaryEmailLambda}-${Env}"
+      Description: This Lambda function generates summary of all loads in raw and mirror layer.
+      Handler: !Sub "success_email_lambda.lambda_handler"
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-lambda"
+      Runtime: python3.7
+      Timeout: 900
+      Code: 
+        S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        S3Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/success_email_lambda.zip"
       VpcConfig:
-        SecurityGroupIds: [!Ref SecurityGroupId]
-        Subnets: !Ref Subnets
-        VpcId: !Ref BuildVPC
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: !FindInMap [ComputeMap, !Ref BuildComputeSize, ComputeType]
-        Image: !FindInMap [ImageMap, !Ref BuildImage, Image]
-        EnvironmentVariables:
-          - Name: CICD_BUCKET
-            Type: PLAINTEXT
-            Value: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
-          - Name: UAI
-            Type: PLAINTEXT
-            Value: !Ref UAI
-          - Name: TEMPLATE
-            Type: PLAINTEXT
-            Value: !Ref Template
-          - Name: GIT_REPO
-            Type: PLAINTEXT
-            Value: !Ref OMGitRepo
-          - Name: APP_PREFIX
-            Type: PLAINTEXT
-            Value: !Sub "${OrganizationName}-${ApplicationName}"
-          - Name: ENVIRONMENT
-            Type: PLAINTEXT
-            Value: !Ref Env
-          - Name: ACCT_ID
-            Type: PLAINTEXT
-            Value: !Ref AWS::AccountId
-          - Name: ROLE
-            Type: PLAINTEXT
-            Value: !Ref CloudFormationServiceRoleName
-          - Name: ORGANIZATION_NAME
-            Type: PLAINTEXT
-            Value: !Sub "${OrganizationName}"
-          - Name: APPLICATION_NAME
-            Type: PLAINTEXT
-            Value: !Sub "${ApplicationName}"
-      TimeoutInMinutes: !Ref BuildTimeoutInMinutes
+        SecurityGroupIds:
+          - !Ref SecurityGroupGeneral
+          - !Ref SecurityGroupRDS
+        SubnetIds:
+          - !Ref VPCSubnet
+      Layers:
+        - !Ref LambdaLayer
       Tags:
-        - Key: "Name"
-          Value: !Sub "${OrganizationName}-${ApplicationName}-codebuild-${OMGitRepo}-${Env}"
-        - Key: "owner"
+        - Key: Name
+          Value: !Sub "${OrganizationName}-${ApplicationName}-${LoadSummaryEmailLambda}-${Env}"
+        - Key: uai
+          Value: !Ref UAI
+        - Key: owner
           Value: !Sub "${OrganizationName}-${ApplicationName}"
-        - Key: "Env"
+        - Key: Env
           Value: !Sub "${Env}"
-        - Key: "UAI"
-          Value: !Sub "${UAI}"
-  OMCICDPipeline:
-    Type: AWS::CodePipeline::Pipeline
+  SalesEmailFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLayer
     Properties:
-      Name: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-pipeline-${Env}"
-      ArtifactStore:
-        Type: S3
-        Location: !Sub "${OrganizationName}-${ApplicationName}-${CICDBucketName}-${Env}"
-        EncryptionKey:
-          Id: !Ref AppKms
-          Type: KMS
-      RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-${CodePipelineServiceRoleName}"
+      FunctionName: !Sub "${OrganizationName}-${ApplicationName}-${SalesEmail}-${Env}"
+      Description: This Lambda function generates summary of all loads in raw and mirror layer.
+      Handler: !Sub "sales_email.lambda_handler"
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-lambda"
+      Runtime: python3.7
+      Timeout: 900
+      Code: 
+        S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        S3Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/sales_email.zip"
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroupGeneral
+          - !Ref SecurityGroupRDS
+        SubnetIds:
+          - !Ref VPCSubnet
+      Layers:
+        - !Ref LambdaLayer
       Tags:
-        - Key: "Name"
-          Value: !Sub "${OrganizationName}-${ApplicationName}-codepipeline-${OMGitRepo}-${Env}"
-        - Key: "owner"
+        - Key: Name
+          Value: !Sub "${OrganizationName}-${ApplicationName}-${SalesEmail}-${Env}"
+        - Key: uai
+          Value: !Ref UAI
+        - Key: owner
           Value: !Sub "${OrganizationName}-${ApplicationName}"
-        - Key: "Env"
+        - Key: Env
           Value: !Sub "${Env}"
-        - Key: "UAI"
-          Value: !Sub "${UAI}"
-      Stages:
-        - Name: Source
-          Actions:
-            - Name: Source
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Version: 1
-                Provider: S3
-              Configuration:
-                S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-${CICDBucketName}-${Env}"
-                S3ObjectKey: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/template.zip"
-              OutputArtifacts:
-                - Name: appsource
-              RunOrder: 1
-        - Name: CreateChangeSet
-          Actions:
-            - Name: Create-Change-Set
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Version: '1'
-                Provider: CloudFormation
-              Configuration:
-                ActionMode: CHANGE_SET_REPLACE
-                StackName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}"
-                ChangeSetName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}-changeset"
-                TemplatePath: !Sub "appsource::${OMGitRepo}.yaml"
-                TemplateConfiguration: !Sub "appsource::template_configs_${Env}.json"
-                RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-${CloudFormationServiceRoleName}"
-              InputArtifacts:
-                - Name: appsource
-              RunOrder: 1
-        - !If
-          - ShouldEnableProdApproval
-          - Name: Deploy
-            Actions:
-              - Name: Approve-Change-Set
-                ActionTypeId:
-                  Category: Approval
-                  Owner: AWS
-                  Provider: Manual
-                  Version: '1'
-                RunOrder: 1
-              - Name: Execute-Change-Set
-                ActionTypeId:
-                  Category: Deploy
-                  Owner: AWS
-                  Version: '1'
-                  Provider: CloudFormation
-                Configuration:
-                  ActionMode: CHANGE_SET_EXECUTE
-                  StackName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}"
-                  ChangeSetName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}-changeset"
-                  RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-${CloudFormationServiceRoleName}"
-                InputArtifacts:
-                  - Name: appsource
-                RunOrder: 2
-          - Name: Deploy
-            Actions:
-              - Name: Execute-Change-Set
-                ActionTypeId:
-                  Category: Deploy
-                  Owner: AWS
-                  Version: '1'
-                  Provider: CloudFormation
-                Configuration:
-                  ActionMode: CHANGE_SET_EXECUTE
-                  StackName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}"
-                  ChangeSetName: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}-${Env}-changeset"
-                  RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-${CloudFormationServiceRoleName}"
-                InputArtifacts:
-                  - Name: appsource
-                RunOrder: 1
+  ExecuteRedshiftLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLayer
+    Properties:
+      FunctionName: !Sub "${OrganizationName}-${ApplicationName}-${ExecuteRedshiftLambda}-${Env}"
+      Description: This Lambda function generates summary of all loads in raw and mirror layer.
+      Handler: !Sub "execute_redshift.lambda_handler"
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-lambda"
+      Runtime: python3.7
+      Timeout: 900
+      Code: 
+        S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        S3Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/execute_redshift.zip"
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroupGeneral
+          - !Ref SecurityGroupRDS
+        SubnetIds:
+          - !Ref VPCSubnet
+      Layers:
+        - !Ref LambdaLayer
+      Environment:
+        Variables:
+          email_from: !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+          email_to: !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+          s3_bucket: !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+          schema_name: !Sub "matl_analytics_eng"
+          secret_dos: !Sub "${OrganizationName}-${ApplicationName}/${Env}/dos"
+          secret_s3: !Sub "/${OrganizationName}-${ApplicationName}/${Env}/accessKey"
+          smtp_server_ip: !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+          environment: !Sub "${Env}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${OrganizationName}-${ApplicationName}-${ExecuteRedshiftLambda}-${Env}"
+        - Key: uai
+          Value: !Ref UAI
+        - Key: owner
+          Value: !Sub "${OrganizationName}-${ApplicationName}"
+        - Key: Env
+          Value: !Sub "${Env}"
+  ObjectRedshiftLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLayer
+    Properties:
+      FunctionName: !Sub "${OrganizationName}-${ApplicationName}-${objectRedshiftLambda}-${Env}"
+      Description: This Lambda function generates summary of all loads in raw and mirror layer.
+      Handler: !Sub "object_redshift.lambda_handler"
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-lambda"
+      Runtime: python3.7
+      Timeout: 900
+      Code: 
+        S3Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        S3Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/functions/object_redshift.zip"
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroupGeneral
+          - !Ref SecurityGroupRDS
+        SubnetIds:
+          - !Ref VPCSubnet
+      Layers:
+        - !Ref LambdaLayer
+      Environment:
+        Variables:
+          email_from: !FindInMap [ EnvironmentMap, !Ref Env, emailFrom ]
+          email_to: !FindInMap [ EnvironmentMap, !Ref Env, emailTo ]
+          s3_bucket: !FindInMap [ EnvironmentMap, !Ref Env, s3Bucket ]
+          schema_name: !Sub "matl_analytics_eng"
+          secret_dos: !Sub "${OrganizationName}-${ApplicationName}/${Env}/dos"
+          secret_s3: !Sub "/${OrganizationName}-${ApplicationName}/${Env}/accessKey"
+          smtp_server_ip: !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+          environment: !Sub "${Env}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${OrganizationName}-${ApplicationName}-${objectRedshiftLambda}-${Env}"
+        - Key: uai
+          Value: !Ref UAI
+        - Key: owner
+          Value: !Sub "${OrganizationName}-${ApplicationName}"
+        - Key: Env
+          Value: !Sub "${Env}"
+  RawLoadStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${OrganizationName}-${ApplicationName}-${RawLoadStateMachineName}-${Env}-Logs"
+      RetentionInDays: 180
+  RawLoadStateMachineWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${OrganizationName}-${ApplicationName}-${RawLoadStateMachineName}-${Env}"
+      StateMachineType: STANDARD
+      DefinitionS3Location:
+        Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/statemachines/${RawLoadStateMachineName}.asl.json"
+      DefinitionSubstitutions:
+        OracleRawJob: !Sub "${OrganizationName}-${ApplicationName}-${OracleRawGlueJobName}-${Env}"
+        DOSRawJob: !Sub "${OrganizationName}-${ApplicationName}-${DOSRawJobName}-${Env}"
+      RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-states"
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt RawLoadStateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ERROR
+  MirrorStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${OrganizationName}-${ApplicationName}-${MirrorStateMachineName}-${Env}-Logs"
+      RetentionInDays: 180
+  MirrorStateMachineWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${OrganizationName}-${ApplicationName}-${MirrorStateMachineName}-${Env}"
+      StateMachineType: STANDARD
+      DefinitionS3Location:
+        Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/statemachines/${MirrorStateMachineName}.asl.json"
+      DefinitionSubstitutions:
+        MirrorJob1: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_1-${Env}"
+        MirrorJob2: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_2-${Env}"
+        MirrorJob3: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_3-${Env}"
+        MirrorJob4: !Sub "${OrganizationName}-${ApplicationName}-${MirrorJobName}_4-${Env}"
+      RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-states"
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt MirrorStateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ERROR
+  FlatfileStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${OrganizationName}-${ApplicationName}-${FlatfileStateMachineName}-${Env}-Logs"
+      RetentionInDays: 180
+  FlatfileStateMachineWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${OrganizationName}-${ApplicationName}-${FlatfileStateMachineName}-${Env}"
+      StateMachineType: STANDARD
+      DefinitionS3Location:
+        Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/statemachines/${FlatfileStateMachineName}.asl.json"
+      DefinitionSubstitutions:
+        SmartsheetRawJob: !Sub "${OrganizationName}-${ApplicationName}-${SmartsheetRawJobName}-${Env}"
+        BoxRawJob: !Sub "${OrganizationName}-${ApplicationName}-${BoxRawGlueJobName}-${Env}"
+      RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-states"
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt FlatfileStateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ERROR
+  orchestrationStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${OrganizationName}-${ApplicationName}-${orchestrationStateMachineName}-${Env}-Logs"
+      RetentionInDays: 180
+  orchestrationStateMachineWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    DependsOn: 
+     - LoadSummaryEmailLambdaFunction
+     - MirrorStateMachineWorkflow
+     - RawLoadStateMachineWorkflow
+     - FlatfileStateMachineWorkflow
+    Properties:
+      StateMachineName: !Sub "${OrganizationName}-${ApplicationName}-${orchestrationStateMachineName}-${Env}"
+      StateMachineType: STANDARD
+      DefinitionS3Location:
+        Bucket: !Sub "${OrganizationName}-${ApplicationName}-cicd-${Env}"
+        Key: !Sub "${OrganizationName}-${ApplicationName}-${OMGitRepo}/${Env}/artifacts/statemachines/${orchestrationStateMachineName}.asl.json"
+      DefinitionSubstitutions:
+        emailFrom: !FindInMap [EnvironmentMap, !Ref Env, emailFrom]
+        emailTo: !FindInMap [EnvironmentMap, !Ref Env, emailTo]
+        smtpServerIp: !FindInMap [ EnvironmentMap, !Ref Env, smtpServerIp ]
+        secretrds: !FindInMap [EnvironmentMap, !Ref Env, rdsUserSecret]
+        LoadSummaryEmailLambda: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${OrganizationName}-${ApplicationName}-${LoadSummaryEmailLambda}-${Env}:$LATEST"
+        MirrorStateMachineName: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${OrganizationName}-${ApplicationName}-${MirrorStateMachineName}-${Env}"
+        RawLoadStateMachineName: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${OrganizationName}-${ApplicationName}-${RawLoadStateMachineName}-${Env}"
+        FlatfileStateMachineName: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${OrganizationName}-${ApplicationName}-${FlatfileStateMachineName}-${Env}"
+      RoleArn: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${OrganizationName}-${ApplicationName}-states"
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt orchestrationStateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ERROR
+
